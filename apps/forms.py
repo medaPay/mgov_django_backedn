@@ -25,7 +25,8 @@ ScreenshotFormSet = inlineformset_factory(App, Screenshot, form=ScreenshotForm, 
 class ReviewForm(forms.ModelForm):
     class Meta:
         model = Review
-        fields = ['comment']
+        fields = ['rating', 'comment']
         widgets = {
+            'rating': forms.Select(attrs={'class': 'form-control'}),
             'comment': forms.Textarea(attrs={'placeholder': 'Write your review here...'})
         }

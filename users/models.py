@@ -1,5 +1,6 @@
 from django.db import models
 from django.contrib.auth.models import AbstractUser
+from django.utils import timezone
 
 class User(AbstractUser):
     mobile_number = models.CharField(max_length=15)
@@ -30,11 +31,14 @@ class Developer(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE)
     organization_name = models.CharField(max_length=255, null=False)
     organization_address = models.CharField(max_length=255, null=False)
-    organization_website = models.URLField(null=True, blank=True)  # This remains optional
+    organization_website = models.URLField(null=True, blank=True)
     city = models.CharField(max_length=100, null=True)
     woreda = models.CharField(max_length=100, null=True)
     zone = models.CharField(max_length=100, null=True, blank=True)
     sub_city = models.CharField(max_length=100, null=True, blank=True)
     business_registration_number = models.CharField(max_length=100, null=False)
-    STATUS_CHOICES = [ ('pending', 'Pending'), ('approved', 'Approved'), ('rejected', 'Rejected'),] 
+    STATUS_CHOICES = [('pending', 'Pending'), ('approved', 'Approved'), ('rejected', 'Rejected')]
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='pending')
+    rejection_reason = models.TextField(null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)

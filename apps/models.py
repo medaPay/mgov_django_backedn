@@ -47,6 +47,11 @@ class App(models.Model):
     web_portal = models.URLField(blank=True, null=True)
     view_count = models.IntegerField(default=0)
     
+    # Compliance checkboxes
+    regulation_compliance = models.BooleanField(default=False, verbose_name="Regulation Compliance")
+    content_guidelines = models.BooleanField(default=False, verbose_name="Content Guidelines")
+    security_requirements = models.BooleanField(default=False, verbose_name="Security Requirements")
+    
     def __str__(self):
         return self.app_name
     
@@ -59,8 +64,17 @@ class Screenshot(models.Model):
         return f"{self.app.app_name} - Screenshot {self.id}"
     
 class Review(models.Model):
+    RATING_CHOICES = [
+        (1, '1 Star'),
+        (2, '2 Stars'),
+        (3, '3 Stars'),
+        (4, '4 Stars'),
+        (5, '5 Stars'),
+    ]
+
     app = models.ForeignKey(App, related_name='reviews', on_delete=models.CASCADE)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    rating = models.IntegerField(choices=RATING_CHOICES, null=True, blank=True)
     comment = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 

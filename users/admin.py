@@ -3,6 +3,7 @@ from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.contrib.auth import get_user_model
 from django import forms
 from .models import Developer
+from .utils import send_developer_status_email
 
 User = get_user_model()
 
@@ -21,9 +22,6 @@ class CustomUserAdminForm(forms.ModelForm):
         if commit:
             user.save()
         return user
-
-
-
 
 class CustomUserAdmin(BaseUserAdmin):
     list_display = ('email', 'username', 'first_name', 'last_name', 'is_active', 'is_staff', 'is_developer')
@@ -70,12 +68,29 @@ class DeveloperAdmin(admin.ModelAdmin):
     actions = ['approve_developers', 'reject_developers']
 
     def approve_developers(self, request, queryset):
-        queryset.update(status='approved')
+        for developer in queryset:
+            old_status = developer.status
+            developer.status = 'approved'
+            developer.save()
+            if old_status != 'approved':
+                send_developer_status_email(developer)
     approve_developers.short_description = "Approve selected developers"
 
     def reject_developers(self, request, queryset):
-        queryset.update(status='rejected')
+        for developer in queryset:
+            old_status = developer.status
+            developer.status = 'rejected'
+            developer.save()
+            if old_status != 'rejected':
+                send_developer_status_email(developer)
     reject_developers.short_description = "Reject selected developers"
+
+    def save_model(self, request, obj, form, change):
+        if change:
+            old_obj = Developer.objects.get(pk=obj.pk)
+            if old_obj.status != obj.status:
+                send_developer_status_email(obj)
+        super().save_model(request, obj, form, change)
 
 admin.site.register(User, CustomUserAdmin)
 admin.site.register(Developer, DeveloperAdmin)

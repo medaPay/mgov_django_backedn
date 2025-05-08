@@ -18,6 +18,8 @@ class ScreenshotInline(admin.TabularInline):
 class ReviewInline(admin.TabularInline):
     model = Review
     extra = 1
+    fields = ['user', 'rating', 'comment', 'created_at']
+    readonly_fields = ['created_at']
 from django.core.mail import send_mail
 from django.template.loader import render_to_string
 from django.utils.html import strip_tags
@@ -72,10 +74,32 @@ def send_status_change_email(developer_email, app_name, old_status, new_status,d
 
 @admin.register(App)
 class AppAdmin(admin.ModelAdmin):
-    list_display = ('app_name', 'developer', 'category', 'status', 'created_at')
-    list_filter = ('status', 'category', 'created_at')
+    list_display = ('app_name', 'developer', 'category', 'status', 'created_at', 
+                   'regulation_compliance', 'content_guidelines', 'security_requirements')
+    list_filter = ('status', 'category', 'created_at', 
+                  'regulation_compliance', 'content_guidelines', 'security_requirements')
     search_fields = ('app_name', 'developer__username', 'tags')
-    inlines = [ScreenshotInline,ReviewInline]
+    inlines = [ScreenshotInline, ReviewInline]
+    
+    fieldsets = (
+        ('Basic Information', {
+            'fields': ('app_name', 'developer', 'category', 'app_version', 'supported_platforms')
+        }),
+        ('App Content', {
+            'fields': ('description', 'tags', 'privacy_policy_url', 'release_notes')
+        }),
+        ('Media Files', {
+            'fields': ('apk_file', 'app_icon', 'cover_graphics', 'promotional_video')
+        }),
+        ('Compliance Information', {
+            'fields': ('regulation_compliance', 'content_guidelines', 'security_requirements'),
+            'description': 'Please check all compliance requirements that have been met.'
+        }),
+        ('Status Information', {
+            'fields': ('status', 'admin_note', 'ios_url', 'web_portal')
+        }),
+    )
+
     def save_model(self, request, obj, form, change):
         if change and 'status' in form.changed_data:
             old_status = App.objects.get(id=obj.id).status if obj.id else None
@@ -89,7 +113,7 @@ class AppAdmin(admin.ModelAdmin):
                     old_status=old_status,
                     new_status=new_status,
                     developer_name=obj.developer,
-                    admin_note = obj.admin_note
+                    admin_note=obj.admin_note
                 )
         
         # Call the parent class's save method

@@ -7,7 +7,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from django.contrib.auth import login
-from .utils import send_email_otp
+from .utils import send_email_otp, send_welcome_email
 from django.views.decorators.csrf import csrf_exempt
 from .models import User,Developer
 from django.http import JsonResponse,HttpResponse
@@ -19,6 +19,12 @@ from .serializer import UserRegistrationSerializer, DeveloperRegistrationSeriali
 import logging
 from google.oauth2 import id_token
 from google.auth.transport import requests
+from django.core.mail import send_mail
+from django.conf import settings
+from django.utils import timezone
+from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework.permissions import IsAuthenticated
+from .utils import send_developer_status_email
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -80,6 +86,9 @@ class DeveloperRegistration(APIView):
         }
 
         developer = Developer.objects.create(**developer_data)
+
+        # Send pending status email
+        send_developer_status_email(developer)
 
         # Serialize and return response
         serializer = DeveloperRegistrationSerializer(developer)
@@ -192,6 +201,9 @@ class UserRegistration(APIView):
         )
         user.set_password(password)  # Set the password securely
         user.save()
+
+        # Send welcome email
+        send_welcome_email(user)
 
         # Serialize and return response
         serializer = UserRegistrationSerializer(user)
@@ -360,3 +372,149 @@ class CustomLoginView(APIView):
 def home(request):
     return HttpResponse('')
   # Render home template
+
+class ForgotPasswordView(APIView):
+    def post(self, request, *args, **kwargs):
+        email = request.data.get('email')
+        if not email:
+            return Response({'detail': 'Email is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.get(email=email)
+            otp = generate_otp()
+            user.email_otp = otp
+            user.otp_created_at = timezone.now()
+            user.save()
+
+            # Send OTP via email
+            send_mail(
+                subject="Password Reset OTP",
+                message=f"Your password reset OTP is: {otp}. This OTP will expire in 10 minutes.",
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[email],
+            )
+            return Response({'message': 'Password reset OTP sent to your email.'}, status=status.HTTP_200_OK)
+        except User.DoesNotExist:
+            return Response({'detail': 'User with this email does not exist.'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({'detail': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class VerifyResetOTPView(APIView):
+    def post(self, request, *args, **kwargs):
+        email = request.data.get('email')
+        otp = request.data.get('otp')
+        
+        if not email or not otp:
+            return Response({'detail': 'Email and OTP are required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.get(email=email)
+            
+            # Check if OTP matches and is not expired (3 minutes validity)
+            if user.email_otp != otp:
+                return Response({'detail': 'Invalid OTP.'}, status=status.HTTP_400_BAD_REQUEST)
+            
+            if not user.otp_created_at or (timezone.now() - user.otp_created_at).total_seconds() > 180:  # 3 minutes
+                return Response({'detail': 'OTP has expired.'}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Generate a temporary token for password reset
+            token = RefreshToken.for_user(user)
+            return Response({
+                'message': 'OTP verified successfully.',
+                'token': str(token.access_token)
+            }, status=status.HTTP_200_OK)
+            
+        except User.DoesNotExist:
+            return Response({'detail': 'User with this email does not exist.'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({'detail': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class ResetPasswordView(APIView):
+    def post(self, request, *args, **kwargs):
+        email = request.data.get('email')
+        new_password = request.data.get('new_password')
+        
+        if not email or not new_password:
+            return Response({'detail': 'Email and new password are required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.get(email=email)
+            
+            # Validate password
+            if len(new_password) < 6:
+                return Response({'detail': 'Password must be at least 6 characters long.'}, 
+                              status=status.HTTP_400_BAD_REQUEST)
+            if new_password.isdigit() or new_password.isalpha():
+                return Response({'detail': 'Password must contain both letters and numbers.'}, 
+                              status=status.HTTP_400_BAD_REQUEST)
+
+            # Set new password
+            user.set_password(new_password)
+            user.email_otp = None  # Clear the OTP
+            user.otp_created_at = None  # Clear the OTP timestamp
+            user.save()
+
+            return Response({'message': 'Password reset successfully.'}, status=status.HTTP_200_OK)
+            
+        except User.DoesNotExist:
+            return Response({'detail': 'User with this email does not exist.'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({'detail': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class ChangeDeveloperPasswordView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request, *args, **kwargs):
+        current_password = request.data.get('current_password')
+        new_password = request.data.get('new_password')
+        
+        if not all([current_password, new_password]):
+            return Response({
+                'detail': 'Current password and new password are required.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            # Get user from the request (authenticated via token)
+            user = request.user
+            
+            # Verify if user is a developer
+            if not user.is_developer:
+                return Response({
+                    'detail': 'This account is not registered as a developer.'
+                }, status=status.HTTP_403_FORBIDDEN)
+
+            # Verify current password
+            if not user.check_password(current_password):
+                return Response({
+                    'detail': 'Current password is incorrect.'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Validate new password
+            if len(new_password) < 6:
+                return Response({
+                    'detail': 'New password must be at least 6 characters long.'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            if new_password.isdigit() or new_password.isalpha():
+                return Response({
+                    'detail': 'New password must contain both letters and numbers.'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Check if new password is same as current password
+            if current_password == new_password:
+                return Response({
+                    'detail': 'New password cannot be the same as current password.'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Set new password
+            user.set_password(new_password)
+            user.save()
+
+            return Response({
+                'message': 'Developer password changed successfully.'
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response({
+                'detail': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
